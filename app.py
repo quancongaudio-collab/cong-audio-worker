@@ -10,6 +10,9 @@ from worker import process_video, get_drive_service, get_db
 
 app = Flask(__name__)
 
+import logging
+logging.basicConfig(level=logging.DEBUG)
+
 WORKER_SECRET = os.environ.get("WORKER_SECRET", "")
 
 
