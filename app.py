@@ -41,8 +41,13 @@ def process():
             app.logger.warning("Unauthorized request")
             return jsonify({"error": "unauthorized"}), 401
 
-        data = request.get_json()
-        app.logger.info(f"Request data: {data}")
+        import json as json_lib
+data = request.get_json(force=True, silent=True)
+if data is None:
+    raw = request.data.decode('utf-8')
+    data = json_lib.loads(raw)
+if isinstance(data, str):
+    data = json_lib.loads(data)
 
         if not data or "file_id" not in data:
             return jsonify({"error": "missing file_id"}), 400
