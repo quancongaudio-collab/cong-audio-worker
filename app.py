@@ -51,7 +51,10 @@ def process():
         conn.close()
         return jsonify(result), 200
     except Exception as e:
-        return jsonify({"status": "error", "error": str(e)}), 500
+    import traceback
+    error_detail = traceback.format_exc()
+    print(f"[ERROR DETAIL] {error_detail}")
+    return jsonify({"status": "error", "error": str(e), "detail": error_detail}), 500
 
 
 if __name__ == "__main__":
