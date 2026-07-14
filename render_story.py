@@ -52,7 +52,8 @@ def upload_drive_file(drive_service, local_path, file_name, parent_folder_id=Non
         file_metadata["parents"] = [parent_folder_id]
     media = MediaFileUpload(local_path, mimetype="video/mp4", resumable=True)
     uploaded = drive_service.files().create(
-        body=file_metadata, media_body=media, fields="id, webViewLink"
+        body=file_metadata, media_body=media, fields="id, webViewLink",
+        supportsAllDrives=True
     ).execute()
     return uploaded
 
