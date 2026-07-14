@@ -58,6 +58,22 @@ def upload_drive_file(drive_service, local_path, file_name, parent_folder_id=Non
     return uploaded
 
 
+def get_user_drive_service():
+    """Tạo Drive service dùng OAuth2 tài khoản Gmail thật — dùng riêng cho upload, tránh lỗi storage quota của Service Account."""
+    from google.oauth2.credentials import Credentials
+    from googleapiclient.discovery import build
+
+    creds = Credentials(
+        token=None,
+        refresh_token=os.environ.get("GOOGLE_OAUTH_REFRESH_TOKEN"),
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=os.environ.get("GOOGLE_OAUTH_CLIENT_ID"),
+        client_secret=os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET"),
+        scopes=["https://www.googleapis.com/auth/drive"],
+    )
+    return build("drive", "v3", credentials=creds)
+
+
 def render_story_video(drive_service, data):
     """
     Hàm chính: tải video gốc -> FFmpeg cắt/ghép chữ/nhạc -> upload kết quả -> dọn dẹp.
@@ -133,9 +149,10 @@ def render_story_video(drive_service, data):
         if not os.path.exists(output_path):
             raise RuntimeError("FFmpeg chạy xong nhưng không tạo được file output.")
 
-        # 5. Upload kết quả lên Drive
+        # 5. Upload kết quả lên Drive (dùng tài khoản Gmail thật qua OAuth, không dùng Service Account)
+        user_drive_service = get_user_drive_service()
         uploaded = upload_drive_file(
-            drive_service, output_path, f"qca_story_{story_id}.mp4", output_folder_id
+            user_drive_service, output_path, f"qca_story_{story_id}.mp4", output_folder_id
         )
 
         return {
