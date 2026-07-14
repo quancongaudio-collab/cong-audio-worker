@@ -98,7 +98,7 @@ def render_story_video(drive_service, data):
         vf = (
             f"crop=ih*9/16:ih,scale=1080:1920,"
             f"fade=t=in:st=0:d=0.6,fade=t=out:st={duration - 0.6}:d=0.6,"
-            f"drawtext=font='DejaVu Sans:style=Bold':text='{escaped_text}':"
+            f"drawtext=font='DejaVu Sans\\:style=Bold':text='{escaped_text}':"
             f"fontcolor=white:fontsize=54:x=(w-text_w)/2:y=h-260:enable='gte(t,{text_start})'"
         )
 
