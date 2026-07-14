@@ -107,7 +107,7 @@ def render_story_video(drive_service, data):
             cmd = [
                 "ffmpeg", "-y", "-ss", str(start), "-i", input_path,
                 "-t", str(duration), "-vf", vf,
-                "-map", "0:v", "-map", "0:a?",
+                "-map", "0:v:0", "-map", "0:a:0?",
                 "-c:v", "libx264", "-c:a", "aac", "-shortest", output_path,
             ]
         else:
