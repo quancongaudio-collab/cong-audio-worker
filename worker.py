@@ -324,7 +324,7 @@ def call_vision_api(frames: list, prompt: str, max_frames: int) -> dict:
     payload = {
         "model": "gpt-4o-mini",
         "messages": [{"role": "user", "content": content}],
-        "max_tokens": 2048,
+        "max_tokens": 4096,  # tăng từ 2048 → 4096 để JSON không bị cắt cụt khi có nhiều segment
         "temperature": 0.2,
         "response_format": {"type": "json_object"},
     }
@@ -369,6 +369,7 @@ def parse_ai_response(text: str) -> dict:
         data = json.loads(text)
     except json.JSONDecodeError as e:
         print(f"[WARN] JSON parse error: {e}")
+        print(f"[WARN] Raw text length: {len(text)} chars — có thể bị cắt cụt do max_tokens")
         data = {}
     if data.get("series") not in VALID_SERIES:
         data["series"] = "Khoảnh khắc đáng nhớ"
