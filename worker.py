@@ -30,7 +30,12 @@ DATABASE_URL     = os.environ["DATABASE_URL"]
 DRIVE_CREDS_JSON = os.environ["GOOGLE_SERVICE_ACCOUNT"]
 
 FRAMES_PER_SEC   = 1
-MAX_FRAMES_BATCH = 10
+
+# Số frame gửi cho Vision API giờ co giãn theo thời lượng video (xem hàm
+# compute_max_frames bên dưới). Các hằng số này là biên trên/dưới của việc co giãn đó:
+MIN_FRAMES_BATCH = 12   # video ngắn vẫn có tối thiểu chừng này frame
+MAX_FRAMES_BATCH = 40   # video dài không vượt quá chừng này (tránh phình chi phí quá mức)
+SECONDS_PER_FRAME = 12  # cứ ~12 giây video thì lấy thêm 1 frame
 
 OPENAI_VISION_URL = "https://api.openai.com/v1/chat/completions"
 EMBEDDING_URL     = "https://api.openai.com/v1/embeddings"
@@ -117,6 +122,16 @@ def extract_tech_info(video_path: str) -> dict:
         "orientation":    orientation,
         "recording_date": rec_date,
     }
+
+
+def compute_max_frames(duration_sec: float) -> int:
+    """
+    Tính số frame tối đa nên gửi cho Vision API, co giãn theo thời lượng video.
+    Video càng dài thì càng cần nhiều frame để AI có đủ dữ liệu tách ra nhiều
+    đoạn giá trị khác nhau, thay vì luôn luôn cố định 10 frame như trước đây.
+    """
+    estimated = int(duration_sec / SECONDS_PER_FRAME)
+    return max(MIN_FRAMES_BATCH, min(MAX_FRAMES_BATCH, estimated))
 
 
 def extract_frames(video_path: str, output_dir: str, fps: float = 1.0) -> list:
@@ -284,11 +299,16 @@ def encode_frame_to_base64(frame_path: str) -> str:
         return base64.b64encode(f.read()).decode("utf-8")
 
 
-def call_vision_api(frames: list, prompt: str) -> dict:
-    """Gọi GPT-4o mini Vision với retry khi rate limit."""
-    if len(frames) > MAX_FRAMES_BATCH:
-        step = len(frames) / MAX_FRAMES_BATCH
-        frames = [frames[int(i * step)] for i in range(MAX_FRAMES_BATCH)]
+def call_vision_api(frames: list, prompt: str, max_frames: int) -> dict:
+    """Gọi GPT-4o mini Vision với retry khi rate limit.
+
+    `max_frames` được tính theo thời lượng video (xem compute_max_frames) thay vì
+    dùng một hằng số cố định — video càng dài càng được gửi nhiều frame hơn, giúp
+    AI có đủ dữ liệu để tách ra nhiều đoạn giá trị khác nhau thay vì chỉ ra 1 đoạn.
+    """
+    if len(frames) > max_frames:
+        step = len(frames) / max_frames
+        frames = [frames[int(i * step)] for i in range(max_frames)]
 
     content = [{"type": "text", "text": prompt}]
     for frame_path in frames:
@@ -567,6 +587,10 @@ def process_video(drive_service, conn, video_info: dict) -> dict:
             print(f"  [2/5] Tech info...")
             tech = extract_tech_info(video_path)
 
+            # Số frame tối đa sẽ gửi cho Vision API, co giãn theo thời lượng video
+            max_frames = compute_max_frames(tech["duration_sec"])
+            print(f"        duration={tech['duration_sec']:.0f}s -> max_frames={max_frames}")
+
             # Bước 3: Whisper
             print(f"  [3/5] Transcribing...")
             audio_path = os.path.join(tmp_dir, "audio.mp3")
@@ -589,11 +613,11 @@ def process_video(drive_service, conn, video_info: dict) -> dict:
                 duration_sec   = tech["duration_sec"],
                 recording_date = tech["recording_date"] or video_info.get("created_time", "")[:10],
                 transcript     = transcript[:3000] if transcript else "(không có audio)",
-                frame_count    = min(len(frames), MAX_FRAMES_BATCH),
+                frame_count    = min(len(frames), max_frames),
                 series_list    = "\n".join(f"- {s}" for s in VALID_SERIES),
             )
 
-            result   = call_vision_api(frames, prompt)
+            result   = call_vision_api(frames, prompt, max_frames)
             ai_data  = parse_ai_response(result["text"])
             cost_usd = result["cost_usd"]
             n_segs   = len(ai_data.get("valuable_segments", []))
