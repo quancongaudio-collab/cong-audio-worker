@@ -108,6 +108,7 @@ def render_story_video(drive_service, data):
                 "ffmpeg", "-y", "-ss", str(start), "-i", input_path,
                 "-t", str(duration), "-vf", vf,
                 "-map", "0:v:0", "-map", "0:a:0?",
+                "-threads", "1", "-preset", "ultrafast",
                 "-c:v", "libx264", "-c:a", "aac", "-shortest", output_path,
             ]
         else:
@@ -119,6 +120,7 @@ def render_story_video(drive_service, data):
                 "-t", str(duration), "-i", music_path,
                 "-vf", vf, "-filter_complex", "[1:a]volume=0.18[bgm]",
                 "-map", "0:v", "-map", "[bgm]",
+                "-threads", "1", "-preset", "ultrafast",
                 "-c:v", "libx264", "-c:a", "aac", "-shortest", output_path,
             ]
 
