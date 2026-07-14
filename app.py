@@ -106,6 +106,7 @@ def render_story_route():
 
     try:
         from render_story import render_story_video
+        from worker import get_drive_service
 
         app.logger.info(f"Rendering story_id={data.get('story_id')}")
         drive_service = get_drive_service()
