@@ -85,6 +85,43 @@ def process():
         }), 500
 
 
+@app.route("/render-story", methods=["POST"])
+def render_story_route():
+    app.logger.info("=== /render-story called ===")
+
+    if not verify_secret(request):
+        return jsonify({"error": "unauthorized"}), 401
+
+    # Xử lý cả trường hợp n8n gửi string hoặc object (giống route /process)
+    data = request.get_json(force=True, silent=True)
+    if data is None:
+        raw = request.data.decode("utf-8")
+        app.logger.info(f"Raw body: {raw[:200]}")
+        data = json_lib.loads(raw)
+    if isinstance(data, str):
+        data = json_lib.loads(data)
+
+    if not isinstance(data, dict) or "drive_file_id" not in data:
+        return jsonify({"error": "missing drive_file_id", "received": str(data)[:200]}), 400
+
+    try:
+        from render_story import render_story_video
+
+        app.logger.info(f"Rendering story_id={data.get('story_id')}")
+        drive_service = get_drive_service()
+        result = render_story_video(drive_service, data)
+        app.logger.info(f"Render done: {result}")
+        return jsonify(result), 200
+
+    except Exception as e:
+        error_detail = traceback.format_exc()
+        app.logger.error(f"[ERROR /render-story]\n{error_detail}")
+        return jsonify({
+            "status": "error",
+            "error": str(e),
+            "detail": error_detail
+        }), 500
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
