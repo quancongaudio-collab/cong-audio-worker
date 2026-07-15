@@ -105,4 +105,9 @@ def extract_tech_info(video_path: str) -> dict:
                 orientation = "Horizontal (16:9)"
             break
 
-    tags = info.get("format",
+    tags = info.get("format", {}).get("tags", {})
+    rec_date = (
+        tags.get("creation_time", "")
+        or tags.get("date", "")
+        or tags.get("com.apple.quicktime.creationdate", "")
+    )
