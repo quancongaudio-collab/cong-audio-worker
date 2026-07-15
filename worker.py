@@ -37,6 +37,15 @@ MIN_FRAMES_BATCH = 12   # video ngắn vẫn có tối thiểu chừng này fram
 MAX_FRAMES_BATCH = 40   # video dài không vượt quá chừng này (tránh phình chi phí quá mức)
 SECONDS_PER_FRAME = 12  # cứ ~12 giây video thì lấy thêm 1 frame
 
+# Timeout (giây) cho các lệnh ffmpeg/ffprobe và tải file — để chúng KHÔNG BAO GIỜ
+# treo vô hạn khi gặp file hỏng/tải dở dang. Nếu vượt quá, subprocess sẽ tự raise
+# TimeoutExpired, được bắt bởi except Exception trong process_video() và ghi
+# thành 'error' trong processing_log thay vì chiếm giữ worker mãi mãi.
+FFPROBE_TIMEOUT_SEC   = 60
+FFMPEG_AUDIO_TIMEOUT  = 180
+FFMPEG_FRAMES_TIMEOUT = 300
+DOWNLOAD_TIMEOUT_SEC  = 600  # tối đa 10 phút để tải xong 1 video
+
 OPENAI_VISION_URL = "https://api.openai.com/v1/chat/completions"
 EMBEDDING_URL     = "https://api.openai.com/v1/embeddings"
 
@@ -65,11 +74,21 @@ def get_drive_service():
 
 
 def download_video(service, file_id: str, dest_path: str):
+    """
+    Tải video từ Drive. Có giới hạn thời gian tổng thể (DOWNLOAD_TIMEOUT_SEC) —
+    nếu quá trình tải bị treo/quá chậm (mạng lỗi, file lớn bất thường), hàm sẽ
+    tự raise TimeoutError thay vì để vòng lặp next_chunk() chạy vô thời hạn.
+    """
     request = service.files().get_media(fileId=file_id)
+    started = time.monotonic()
     with open(dest_path, "wb") as fh:
         downloader = MediaIoBaseDownload(fh, request)
         done = False
         while not done:
+            if time.monotonic() - started > DOWNLOAD_TIMEOUT_SEC:
+                raise TimeoutError(
+                    f"Tải file vượt quá {DOWNLOAD_TIMEOUT_SEC}s — có thể mạng lỗi hoặc file quá lớn"
+                )
             _, done = downloader.next_chunk()
 
 
@@ -82,7 +101,9 @@ def extract_tech_info(video_path: str) -> dict:
         "ffprobe", "-v", "quiet", "-print_format", "json",
         "-show_streams", "-show_format", video_path
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(
+        cmd, capture_output=True, text=True, timeout=FFPROBE_TIMEOUT_SEC
+    )
     info = json.loads(result.stdout)
 
     duration_sec = float(info.get("format", {}).get("duration", 0))
@@ -143,7 +164,7 @@ def extract_frames(video_path: str, output_dir: str, fps: float = 1.0) -> list:
         "-s", "640x360",
         frame_pattern,
         "-y", "-loglevel", "error"
-    ], check=True)
+    ], check=True, timeout=FFMPEG_FRAMES_TIMEOUT)
     frames = sorted(Path(output_dir).glob("frame_*.jpg"))
     return [str(f) for f in frames]
 
@@ -155,7 +176,7 @@ def extract_audio(video_path: str, output_path: str):
         "-ar", "16000", "-ac", "1",
         output_path,
         "-y", "-loglevel", "error"
-    ], check=True)
+    ], check=True, timeout=FFMPEG_AUDIO_TIMEOUT)
 
 
 # ─────────────────────────────────────────────
@@ -677,6 +698,18 @@ def process_video(drive_service, conn, video_info: dict) -> dict:
 
             print(f"  [DONE] {len(video_ids)} record(s) | ${cost_usd:.4f}")
             return {"status": "done", "video_ids": video_ids, "cost_usd": cost_usd}
+
+        except subprocess.TimeoutExpired as e:
+            error_msg = f"Timeout khi chạy ffmpeg/ffprobe: {e}"
+            print(f"  [ERROR] {error_msg}")
+            mark_error(conn, file_id, error_msg)
+            return {"status": "error", "error": error_msg}
+
+        except TimeoutError as e:
+            error_msg = f"Timeout khi tải file từ Drive: {e}"
+            print(f"  [ERROR] {error_msg}")
+            mark_error(conn, file_id, error_msg)
+            return {"status": "error", "error": error_msg}
 
         except Exception as e:
             import traceback
