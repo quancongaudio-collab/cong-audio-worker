@@ -267,6 +267,35 @@ cho TỪNG đoạn (dựa vào transcript tương ứng với khoảng start_tim
 - Nếu không có lời thoại giá trị, hoặc âm thanh nền kém/ồn/nhiễu → nên GHÉP NHẠC NỀN.
 - Nếu lời thoại có giá trị nhưng nền hơi ồn → GIỮ GỐC + HẠ ÂM LƯỢNG, THÊM NHẠC NHẸ.
 
+=== CHẤM ĐIỂM CHẤT LƯỢNG HÌNH ẢNH — BẮT BUỘC, THANG ĐIỂM 0-100 ===
+Giống nguyên tắc "Analyze Once – Reuse Everywhere" ở trên, các workflow sản xuất nội dung sau này
+sẽ CHỈ ĐỌC các điểm số dưới đây để quyết định đoạn nào đủ chất lượng để dùng ngay, đoạn nào cần
+chỉnh sửa hậu kỳ, đoạn nào nên loại bỏ — KHÔNG được phép chấm điểm lại lần thứ hai. Vì vậy bạn phải
+đánh giá kỹ và chính xác cho TỪNG đoạn, dựa trên các frame tương ứng với khoảng start_time-end_time
+của đoạn đó:
+
+- stability_score (0-100): Độ ổn định hình ảnh — rung tay, lắc máy càng nhiều thì điểm càng thấp.
+  90-100: cầm vững/dùng gimbal, gần như không rung. 50-70: rung nhẹ, vẫn xem được.
+  Dưới 40: rung mạnh, khó chịu khi xem.
+- focus_score (0-100): Độ nét — chủ thể (sản phẩm/người) có bị mờ, out nét, chưa lấy nét kịp không.
+  90-100: sắc nét hoàn toàn. Dưới 40: mờ nhòe rõ rệt, mất chi tiết.
+- lighting_score (0-100): Ánh sáng — đủ sáng, không cháy sáng (overexposed) hoặc thiếu sáng
+  (underexposed), có tôn được chi tiết sản phẩm không.
+- composition_score (0-100): Bố cục khung hình — cân đối, chủ thể không bị cắt cụt/che khuất,
+  không rối mắt.
+- luxury_score (0-100): Cảm giác sang trọng, cao cấp phù hợp thương hiệu audio hi-end — ánh sáng/
+  không gian/góc quay có tôn được giá trị sản phẩm không.
+- visual_quality_score (0-100): Điểm TỔNG HỢP phản ánh chất lượng hình ảnh chung của đoạn này —
+  tự cân nhắc dựa trên 4 điểm trên theo đánh giá tổng thể của bạn, KHÔNG phải phép tính trung bình
+  cộng máy móc.
+- visual_issues: mảng liệt kê ngắn gọn các vấn đề hình ảnh cụ thể quan sát được trong đoạn này
+  (ví dụ: "rung nhẹ ở đầu đoạn", "thiếu sáng góc trái", "mất nét lúc zoom"). Để mảng rỗng [] nếu
+  không có vấn đề gì đáng kể.
+- asset_quality_status: chọn ĐÚNG MỘT trong 3 giá trị:
+  "đạt" — không có vấn đề rung/mất nét/thiếu sáng nghiêm trọng nào, dùng được ngay.
+  "cần chỉnh sửa" — có vấn đề nhưng có thể xử lý hậu kỳ (hơi thiếu sáng, rung nhẹ...).
+  "không đạt" — rung mạnh, mất nét nghiêm trọng, hoặc thiếu sáng/cháy sáng nặng, không nên dùng.
+
 === ĐỘ DÀI ĐOẠN — CHỈ LÀ GỢI Ý, KHÔNG PHẢI QUY ĐỊNH CỨNG ===
 Tham khảo (được phép linh hoạt nếu nội dung thực sự có giá trị):
 - Facebook Story: 15-30 giây (tối đa ~40 giây nếu thực sự cuốn)
@@ -304,7 +333,15 @@ Tham khảo (được phép linh hoạt nếu nội dung thực sự có giá tr
       "has_clear_speech": true,
       "audio_quality": "Chọn 1 trong: tot, trung_binh, kem",
       "audio_recommendation": "Chọn 1 trong: giữ âm thanh gốc, ghép nhạc nền, giữ gốc + hạ âm lượng thêm nhạc nhẹ",
-      "audio_reason": "Giải thích ngắn gọn 1 câu vì sao đề xuất audio_recommendation ở trên."
+      "audio_reason": "Giải thích ngắn gọn 1 câu vì sao đề xuất audio_recommendation ở trên.",
+      "visual_quality_score": 85,
+      "luxury_score": 80,
+      "composition_score": 82,
+      "lighting_score": 78,
+      "stability_score": 90,
+      "focus_score": 88,
+      "visual_issues": ["hơi thiếu sáng ở góc phải"],
+      "asset_quality_status": "đạt"
     }}
   ]
 }}
@@ -494,12 +531,17 @@ def save_video_records(conn, common_meta: dict, segments: list) -> list:
     file_name, series, brands...) được lặp lại trên mọi dòng; metadata cấp đoạn
     (start_time, end_time, summary, reason, segment_type, platform_usage,
     audio_type, has_clear_speech, audio_quality, audio_recommendation, audio_reason,
-    embedding) là riêng cho từng dòng.
+    visual_quality_score, luxury_score, composition_score, lighting_score,
+    stability_score, focus_score, visual_issues, asset_quality_status, embedding)
+    là riêng cho từng dòng.
 
     Audio metadata (audio_type, has_clear_speech, audio_quality, audio_recommendation,
-    audio_reason) được AI phân tích DUY NHẤT 1 LẦN ở đây. Các workflow sản xuất nội dung
-    sau này (Story/Reel/TikTok/Shorts/Website) chỉ đọc lại các cột này để quyết định
-    giữ âm thanh gốc hay ghép nhạc — tuyệt đối không gọi AI phân tích âm thanh lần 2
+    audio_reason) và điểm chất lượng hình ảnh (visual_quality_score, luxury_score,
+    composition_score, lighting_score, stability_score, focus_score, visual_issues,
+    asset_quality_status) đều được AI phân tích DUY NHẤT 1 LẦN ở đây. Các workflow
+    sản xuất nội dung sau này (Story/Reel/TikTok/Shorts/Website) chỉ đọc lại các cột
+    này để quyết định giữ âm thanh gốc hay ghép nhạc, đoạn nào đủ chất lượng dùng ngay
+    hay cần chỉnh sửa hậu kỳ — tuyệt đối không gọi AI phân tích lại lần 2
     (nguyên tắc "Analyze Once – Reuse Everywhere").
     """
     if not segments:
@@ -521,6 +563,14 @@ def save_video_records(conn, common_meta: dict, segments: list) -> list:
             "audio_quality":         "trung_binh",
             "audio_recommendation":  "ghép nhạc nền",
             "audio_reason":          "Không có đoạn giá trị được xác định nên không đánh giá âm thanh chi tiết; mặc định đề xuất ghép nhạc nền.",
+            "visual_quality_score":  None,
+            "luxury_score":          None,
+            "composition_score":     None,
+            "lighting_score":        None,
+            "stability_score":       None,
+            "focus_score":           None,
+            "visual_issues":         [],
+            "asset_quality_status":  "cần chỉnh sửa",
         }]
 
     rows = []
@@ -567,6 +617,14 @@ def save_video_records(conn, common_meta: dict, segments: list) -> list:
             seg.get("audio_quality", ""),
             seg.get("audio_recommendation", ""),
             seg.get("audio_reason", ""),
+            seg.get("visual_quality_score"),
+            seg.get("luxury_score"),
+            seg.get("composition_score"),
+            seg.get("lighting_score"),
+            seg.get("stability_score"),
+            seg.get("focus_score"),
+            seg.get("visual_issues", []),
+            seg.get("asset_quality_status", ""),
             embedding,
         ))
 
@@ -581,7 +639,10 @@ def save_video_records(conn, common_meta: dict, segments: list) -> list:
                 processing_cost_usd, extra_meta, created_at,
                 segment_index, start_time, end_time, reason, segment_type,
                 platform_usage, audio_type, has_clear_speech, audio_quality,
-                audio_recommendation, audio_reason, embedding
+                audio_recommendation, audio_reason,
+                visual_quality_score, luxury_score, composition_score, lighting_score,
+                stability_score, focus_score, visual_issues, asset_quality_status,
+                embedding
             ) VALUES %s
         """, rows, template="""(
             %s,%s,%s,%s,%s,
@@ -592,7 +653,10 @@ def save_video_records(conn, common_meta: dict, segments: list) -> list:
             %s,%s,NOW(),
             %s,%s,%s,%s,%s,
             %s,%s,%s,%s,
-            %s,%s,%s
+            %s,%s,
+            %s,%s,%s,%s,
+            %s,%s,%s,%s,
+            %s
         )""")
     conn.commit()
     return ids
