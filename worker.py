@@ -37,7 +37,7 @@ SECONDS_PER_FRAME = 12  # cứ ~12 giây video thì lấy thêm 1 frame
 # thành 'error' trong processing_log thay vì chiếm giữ worker mãi mãi.
 FFPROBE_TIMEOUT_SEC   = 60
 FFMPEG_AUDIO_TIMEOUT  = 180
-FFMPEG_FRAMES_TIMEOUT = 300
+FFMPEG_FRAMES_TIMEOUT = 600  # 10 phút
 DOWNLOAD_TIMEOUT_SEC  = 600  # tối đa 10 phút để tải xong 1 video
 OPENAI_VISION_URL = "https://api.openai.com/v1/chat/completions"
 EMBEDDING_URL     = "https://api.openai.com/v1/embeddings"
