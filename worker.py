@@ -31,20 +31,14 @@ DRIVE_CREDS_JSON = os.environ["GOOGLE_SERVICE_ACCOUNT"]
 
 FRAMES_PER_SEC   = 1
 
-# Số frame gửi cho Vision API giờ co giãn theo thời lượng video (xem hàm
-# compute_max_frames bên dưới). Các hằng số này là biên trên/dưới của việc co giãn đó:
-MIN_FRAMES_BATCH = 12   # video ngắn vẫn có tối thiểu chừng này frame
-MAX_FRAMES_BATCH = 40   # video dài không vượt quá chừng này (tránh phình chi phí quá mức)
-SECONDS_PER_FRAME = 12  # cứ ~12 giây video thì lấy thêm 1 frame
+MIN_FRAMES_BATCH = 12
+MAX_FRAMES_BATCH = 40
+SECONDS_PER_FRAME = 12
 
-# Timeout (giây) cho các lệnh ffmpeg/ffprobe và tải file — để chúng KHÔNG BAO GIỜ
-# treo vô hạn khi gặp file hỏng/tải dở dang. Nếu vượt quá, subprocess sẽ tự raise
-# TimeoutExpired, được bắt bởi except Exception trong process_video() và ghi
-# thành 'error' trong processing_log thay vì chiếm giữ worker mãi mãi.
 FFPROBE_TIMEOUT_SEC   = 60
 FFMPEG_AUDIO_TIMEOUT  = 180
 FFMPEG_FRAMES_TIMEOUT = 300
-DOWNLOAD_TIMEOUT_SEC  = 600  # tối đa 10 phút để tải xong 1 video
+DOWNLOAD_TIMEOUT_SEC  = 600
 
 OPENAI_VISION_URL = "https://api.openai.com/v1/chat/completions"
 EMBEDDING_URL     = "https://api.openai.com/v1/embeddings"
@@ -74,11 +68,6 @@ def get_drive_service():
 
 
 def download_video(service, file_id: str, dest_path: str):
-    """
-    Tải video từ Drive. Có giới hạn thời gian tổng thể (DOWNLOAD_TIMEOUT_SEC) —
-    nếu quá trình tải bị treo/quá chậm (mạng lỗi, file lớn bất thường), hàm sẽ
-    tự raise TimeoutError thay vì để vòng lặp next_chunk() chạy vô thời hạn.
-    """
     request = service.files().get_media(fileId=file_id)
     started = time.monotonic()
     with open(dest_path, "wb") as fh:
@@ -146,11 +135,6 @@ def extract_tech_info(video_path: str) -> dict:
 
 
 def compute_max_frames(duration_sec: float) -> int:
-    """
-    Tính số frame tối đa nên gửi cho Vision API, co giãn theo thời lượng video.
-    Video càng dài thì càng cần nhiều frame để AI có đủ dữ liệu tách ra nhiều
-    đoạn giá trị khác nhau, thay vì luôn luôn cố định 10 frame như trước đây.
-    """
     estimated = int(duration_sec / SECONDS_PER_FRAME)
     return max(MIN_FRAMES_BATCH, min(MAX_FRAMES_BATCH, estimated))
 
@@ -273,7 +257,6 @@ sẽ CHỈ ĐỌC các điểm số dưới đây để quyết định đoạn 
 chỉnh sửa hậu kỳ, đoạn nào nên loại bỏ — KHÔNG được phép chấm điểm lại lần thứ hai. Vì vậy bạn phải
 đánh giá kỹ và chính xác cho TỪNG đoạn, dựa trên các frame tương ứng với khoảng start_time-end_time
 của đoạn đó:
-
 - stability_score (0-100): Độ ổn định hình ảnh — rung tay, lắc máy càng nhiều thì điểm càng thấp.
   90-100: cầm vững/dùng gimbal, gần như không rung. 50-70: rung nhẹ, vẫn xem được.
   Dưới 40: rung mạnh, khó chịu khi xem.
@@ -358,12 +341,6 @@ def encode_frame_to_base64(frame_path: str) -> str:
 
 
 def call_vision_api(frames: list, prompt: str, max_frames: int) -> dict:
-    """Gọi GPT-4o mini Vision với retry khi rate limit.
-
-    `max_frames` được tính theo thời lượng video (xem compute_max_frames) thay vì
-    dùng một hằng số cố định — video càng dài càng được gửi nhiều frame hơn, giúp
-    AI có đủ dữ liệu để tách ra nhiều đoạn giá trị khác nhau thay vì chỉ ra 1 đoạn.
-    """
     if len(frames) > max_frames:
         step = len(frames) / max_frames
         frames = [frames[int(i * step)] for i in range(max_frames)]
@@ -382,7 +359,7 @@ def call_vision_api(frames: list, prompt: str, max_frames: int) -> dict:
     payload = {
         "model": "gpt-4o-mini",
         "messages": [{"role": "user", "content": content}],
-        "max_tokens": 4096,  # tăng từ 2048 → 4096 để JSON không bị cắt cụt khi có nhiều segment
+        "max_tokens": 4096,
         "temperature": 0.2,
         "response_format": {"type": "json_object"},
     }
@@ -488,12 +465,6 @@ def mark_processing(conn, drive_file_id: str):
 
 
 def update_step(conn, drive_file_id: str, step: str):
-    """
-    Ghi lại bước hiện tại worker đang xử lý cho file này, kèm thời điểm cập nhật.
-    Dùng để theo dõi tiến độ/chẩn đoán khi 1 video bị "kẹt" lâu ở trạng thái
-    processing — chỉ cần xem cột current_step + updated_at là biết đang đứng ở
-    bước nào, không cần mò log Render.
-    """
     with conn.cursor() as cur:
         cur.execute("""
             UPDATE processing_log
@@ -525,28 +496,7 @@ def mark_error(conn, drive_file_id: str, error: str):
 
 
 def save_video_records(conn, common_meta: dict, segments: list) -> list:
-    """
-    Lưu N dòng vào bảng `videos` cho 1 file gốc — mỗi dòng là 1 đoạn có giá trị
-    tái sử dụng (không còn bảng `scenes` riêng). Metadata cấp file (drive_file_id,
-    file_name, series, brands...) được lặp lại trên mọi dòng; metadata cấp đoạn
-    (start_time, end_time, summary, reason, segment_type, platform_usage,
-    audio_type, has_clear_speech, audio_quality, audio_recommendation, audio_reason,
-    visual_quality_score, luxury_score, composition_score, lighting_score,
-    stability_score, focus_score, visual_issues, asset_quality_status, embedding)
-    là riêng cho từng dòng.
-
-    Audio metadata (audio_type, has_clear_speech, audio_quality, audio_recommendation,
-    audio_reason) và điểm chất lượng hình ảnh (visual_quality_score, luxury_score,
-    composition_score, lighting_score, stability_score, focus_score, visual_issues,
-    asset_quality_status) đều được AI phân tích DUY NHẤT 1 LẦN ở đây. Các workflow
-    sản xuất nội dung sau này (Story/Reel/TikTok/Shorts/Website) chỉ đọc lại các cột
-    này để quyết định giữ âm thanh gốc hay ghép nhạc, đoạn nào đủ chất lượng dùng ngay
-    hay cần chỉnh sửa hậu kỳ — tuyệt đối không gọi AI phân tích lại lần 2
-    (nguyên tắc "Analyze Once – Reuse Everywhere").
-    """
     if not segments:
-        # Không có đoạn nào đáng tái sử dụng — vẫn lưu 1 dòng fallback để không mất
-        # hoàn toàn dữ liệu / video vẫn tra cứu được, đánh dấu rõ lý do.
         segments = [{
             "start_time":     "00:00",
             "end_time":       common_meta.get("duration", ""),
@@ -663,7 +613,7 @@ def save_video_records(conn, common_meta: dict, segments: list) -> list:
 
 
 # ─────────────────────────────────────────────
-# 7. MAIN PIPELINE
+# 7. MAIN PIPELINE (video mới)
 # ─────────────────────────────────────────────
 
 def process_video(drive_service, conn, video_info: dict) -> dict:
@@ -680,22 +630,18 @@ def process_video(drive_service, conn, video_info: dict) -> dict:
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         try:
-            # Bước 1: Download
             video_path = os.path.join(tmp_dir, "video.mp4")
             print(f"  [1/5] Downloading...")
             update_step(conn, file_id, "downloading")
             download_video(drive_service, file_id, video_path)
 
-            # Bước 2: Tech info
             print(f"  [2/5] Tech info...")
             update_step(conn, file_id, "extracting_tech_info")
             tech = extract_tech_info(video_path)
 
-            # Số frame tối đa sẽ gửi cho Vision API, co giãn theo thời lượng video
             max_frames = compute_max_frames(tech["duration_sec"])
             print(f"        duration={tech['duration_sec']:.0f}s -> max_frames={max_frames}")
 
-            # Bước 3: Whisper
             print(f"  [3/5] Transcribing...")
             update_step(conn, file_id, "extracting_audio")
             audio_path = os.path.join(tmp_dir, "audio.mp3")
@@ -703,7 +649,6 @@ def process_video(drive_service, conn, video_info: dict) -> dict:
             update_step(conn, file_id, "transcribing")
             transcript = transcribe_audio(audio_path)
 
-            # Bước 4: Frames
             print(f"  [4/5] Extracting frames...")
             update_step(conn, file_id, "extracting_frames")
             frames_dir = os.path.join(tmp_dir, "frames")
@@ -711,7 +656,6 @@ def process_video(drive_service, conn, video_info: dict) -> dict:
             frames = extract_frames(video_path, frames_dir, fps=FRAMES_PER_SEC)
             print(f"        {len(frames)} frames")
 
-            # Bước 5: GPT-4o mini Vision
             print(f"  [5/5] Calling GPT-4o mini Vision...")
             update_step(conn, file_id, "calling_vision_api")
             prompt = PROMPT_TEMPLATE.format(
@@ -782,3 +726,280 @@ def process_video(drive_service, conn, video_info: dict) -> dict:
             print(traceback.format_exc())
             mark_error(conn, file_id, error_msg)
             return {"status": "error", "error": error_msg}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 8. RESCORE — chấm điểm chất lượng hình ảnh bổ sung cho video CŨ
+#
+# Các hàm dưới đây HOÀN TOÀN TÁCH BIỆT với pipeline chính (process_video) ở
+# trên — không sửa, không gọi tới bất kỳ hàm nào phía trên ngoài các hàm dùng
+# chung (download_video, extract_tech_info, compute_max_frames, extract_frames,
+# encode_frame_to_base64, get_db). Mục đích: với các video ĐÃ có sẵn segment
+# trong bảng `videos` (đã indexed trước khi có 8 cột điểm chất lượng), tải lại
+# video, tách frame, rồi CHỈ hỏi AI chấm điểm cho từng segment đã biết sẵn
+# start_time/end_time — không chạy lại Whisper, không tạo segment mới, không
+# INSERT dòng mới. Kết quả được UPDATE vào đúng dòng cũ theo (drive_file_id,
+# segment_index).
+# ═══════════════════════════════════════════════════════════════════════════
+
+RESCORE_PROMPT_TEMPLATE = """
+Bạn là chuyên gia đánh giá chất lượng hình ảnh video cho Công Audio — cửa hàng audio hi-end
+tại Việt Nam. Video này ĐÃ được lập chỉ mục nội dung từ trước — nhiệm vụ của bạn bây giờ CHỈ là
+chấm điểm chất lượng hình ảnh cho từng đoạn đã xác định sẵn dưới đây, KHÔNG cần phân tích lại
+nội dung/câu chuyện.
+
+=== THÔNG TIN KỸ THUẬT ===
+- File name: {file_name}
+- Thư mục: {folder_name}
+- Thời lượng gốc: {duration} (tổng {duration_sec:.0f} giây)
+
+=== CÁC ĐOẠN CẦN CHẤM ĐIỂM (đã xác định sẵn, KHÔNG được thêm/bớt/đổi thời gian) ===
+{segments_list}
+
+=== NHIỆM VỤ ===
+Dựa trên {frame_count} frame bên dưới (trải đều từ 00:00 đến hết video {duration_sec:.0f} giây),
+với MỖI đoạn trong danh sách trên (theo đúng segment_index), chấm điểm chất lượng hình ảnh theo
+thang 0-100:
+
+- stability_score (0-100): Độ ổn định hình ảnh — rung tay, lắc máy càng nhiều thì điểm càng thấp.
+  90-100: cầm vững/dùng gimbal, gần như không rung. 50-70: rung nhẹ, vẫn xem được.
+  Dưới 40: rung mạnh, khó chịu khi xem.
+- focus_score (0-100): Độ nét — chủ thể (sản phẩm/người) có bị mờ, out nét, chưa lấy nét kịp không.
+  90-100: sắc nét hoàn toàn. Dưới 40: mờ nhòe rõ rệt, mất chi tiết.
+- lighting_score (0-100): Ánh sáng — đủ sáng, không cháy sáng (overexposed) hoặc thiếu sáng
+  (underexposed), có tôn được chi tiết sản phẩm không.
+- composition_score (0-100): Bố cục khung hình — cân đối, chủ thể không bị cắt cụt/che khuất,
+  không rối mắt.
+- luxury_score (0-100): Cảm giác sang trọng, cao cấp phù hợp thương hiệu audio hi-end.
+- visual_quality_score (0-100): Điểm TỔNG HỢP phản ánh chất lượng hình ảnh chung của đoạn này —
+  tự cân nhắc dựa trên 4 điểm trên theo đánh giá tổng thể, KHÔNG phải trung bình cộng máy móc.
+- visual_issues: mảng liệt kê ngắn gọn các vấn đề hình ảnh cụ thể (ví dụ "rung nhẹ ở đầu đoạn",
+  "thiếu sáng góc trái"). Để mảng rỗng [] nếu không có vấn đề gì đáng kể.
+- asset_quality_status: chọn ĐÚNG MỘT trong 3 giá trị:
+  "đạt" — dùng được ngay.
+  "cần chỉnh sửa" — có vấn đề nhưng xử lý hậu kỳ được.
+  "không đạt" — rung mạnh/mất nét/thiếu sáng nghiêm trọng, không nên dùng.
+
+=== JSON CẦN TRẢ VỀ ===
+{{
+  "scores": [
+    {{
+      "segment_index": 1,
+      "visual_quality_score": 85,
+      "luxury_score": 80,
+      "composition_score": 82,
+      "lighting_score": 78,
+      "stability_score": 90,
+      "focus_score": 88,
+      "visual_issues": ["hơi thiếu sáng ở góc phải"],
+      "asset_quality_status": "đạt"
+    }}
+  ]
+}}
+
+QUY TẮC: Chỉ trả về JSON, không markdown. Phải trả về điểm cho ĐỦ và ĐÚNG số lượng
+segment_index đã liệt kê ở trên, không thêm/bớt.
+"""
+
+
+def get_videos_needing_rescore(conn, limit: int = None) -> list:
+    """
+    Trả về danh sách các drive_file_id (kèm file_name/folder/file_path/duration)
+    có ít nhất 1 segment chưa được chấm điểm (visual_quality_score IS NULL) —
+    đây là các video "cũ" cần rescore bổ sung.
+    """
+    query = """
+        SELECT DISTINCT ON (drive_file_id)
+            drive_file_id, file_name, folder, file_path, duration
+        FROM videos
+        WHERE drive_file_id IN (
+            SELECT DISTINCT drive_file_id FROM videos WHERE visual_quality_score IS NULL
+        )
+        ORDER BY drive_file_id
+    """
+    if limit:
+        query += f" LIMIT {int(limit)}"
+    with conn.cursor() as cur:
+        cur.execute(query)
+        cols = [desc[0] for desc in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def get_existing_segments(conn, drive_file_id: str) -> list:
+    """
+    Lấy danh sách segment đã có sẵn (segment_index, start_time, end_time, summary)
+    cho 1 file — dùng để bảo AI chấm điểm đúng các đoạn này, không tạo đoạn mới.
+    """
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT segment_index, start_time, end_time, summary
+            FROM videos
+            WHERE drive_file_id = %s
+            ORDER BY segment_index
+        """, (drive_file_id,))
+        rows = cur.fetchall()
+        return [
+            {"segment_index": r[0], "start_time": r[1], "end_time": r[2], "summary": r[3]}
+            for r in rows
+        ]
+
+
+def update_visual_scores(conn, drive_file_id: str, scores: list) -> int:
+    """
+    UPDATE (không INSERT) điểm chất lượng hình ảnh vào đúng dòng đã có sẵn,
+    khớp theo (drive_file_id, segment_index). Trả về số dòng đã cập nhật.
+    """
+    updated = 0
+    with conn.cursor() as cur:
+        for s in scores:
+            cur.execute("""
+                UPDATE videos
+                SET visual_quality_score = %s,
+                    luxury_score = %s,
+                    composition_score = %s,
+                    lighting_score = %s,
+                    stability_score = %s,
+                    focus_score = %s,
+                    visual_issues = %s,
+                    asset_quality_status = %s
+                WHERE drive_file_id = %s AND segment_index = %s
+            """, (
+                s.get("visual_quality_score"),
+                s.get("luxury_score"),
+                s.get("composition_score"),
+                s.get("lighting_score"),
+                s.get("stability_score"),
+                s.get("focus_score"),
+                s.get("visual_issues", []),
+                s.get("asset_quality_status", ""),
+                drive_file_id,
+                s.get("segment_index"),
+            ))
+            updated += cur.rowcount
+    conn.commit()
+    return updated
+
+
+def rescore_video(drive_service, conn, drive_file_id: str, file_name: str,
+                   folder_name: str = "", file_path: str = "") -> dict:
+    """
+    Chấm điểm chất lượng hình ảnh bổ sung cho 1 video đã indexed từ trước.
+    KHÔNG đụng đến processing_log, KHÔNG chạy Whisper, KHÔNG tạo segment mới —
+    chỉ tải lại video, tách frame, gọi Vision API hỏi điểm số, rồi UPDATE vào
+    các dòng `videos` đã có sẵn.
+    """
+    print(f"\n[RESCORE-START] {file_name}")
+
+    existing_segments = get_existing_segments(conn, drive_file_id)
+    if not existing_segments:
+        msg = f"Không tìm thấy segment nào trong bảng videos cho {drive_file_id}"
+        print(f"  [RESCORE-SKIP] {msg}")
+        return {"status": "skipped", "reason": msg}
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        try:
+            video_path = os.path.join(tmp_dir, "video.mp4")
+            print(f"  [1/3] Downloading...")
+            download_video(drive_service, drive_file_id, video_path)
+
+            print(f"  [2/3] Tech info + extracting frames...")
+            tech = extract_tech_info(video_path)
+            max_frames = compute_max_frames(tech["duration_sec"])
+
+            frames_dir = os.path.join(tmp_dir, "frames")
+            os.makedirs(frames_dir)
+            frames = extract_frames(video_path, frames_dir, fps=FRAMES_PER_SEC)
+            print(f"        {len(frames)} frames, max_frames={max_frames}")
+
+            segments_list_str = "\n".join(
+                f'- segment_index {seg["segment_index"]}: {seg["start_time"]}–{seg["end_time"]} '
+                f'({seg["summary"][:80]})'
+                for seg in existing_segments
+            )
+
+            prompt = RESCORE_PROMPT_TEMPLATE.format(
+                file_name      = file_name,
+                folder_name    = folder_name,
+                duration       = tech["duration"],
+                duration_sec   = tech["duration_sec"],
+                segments_list  = segments_list_str,
+                frame_count    = min(len(frames), max_frames),
+            )
+
+            print(f"  [3/3] Calling GPT-4o mini Vision (rescore only)...")
+            result = call_vision_api(frames, prompt, max_frames)
+            data   = parse_rescore_response(result["text"])
+            scores = data.get("scores", [])
+
+            if not scores:
+                print(f"  [RESCORE-WARN] Không nhận được điểm số nào từ AI")
+                return {"status": "error", "error": "AI không trả về điểm số"}
+
+            updated = update_visual_scores(conn, drive_file_id, scores)
+            print(f"  [RESCORE-DONE] {updated} segment(s) đã cập nhật | ${result['cost_usd']:.4f}")
+            return {"status": "done", "updated": updated, "cost_usd": result["cost_usd"]}
+
+        except subprocess.TimeoutExpired as e:
+            error_msg = f"Timeout khi chạy ffmpeg/ffprobe: {e}"
+            print(f"  [RESCORE-ERROR] {error_msg}")
+            return {"status": "error", "error": error_msg}
+
+        except TimeoutError as e:
+            error_msg = f"Timeout khi tải file từ Drive: {e}"
+            print(f"  [RESCORE-ERROR] {error_msg}")
+            return {"status": "error", "error": error_msg}
+
+        except Exception as e:
+            import traceback
+            error_msg = str(e)
+            print(f"  [RESCORE-ERROR] {error_msg}")
+            print(traceback.format_exc())
+            return {"status": "error", "error": error_msg}
+
+
+def parse_rescore_response(text: str) -> dict:
+    text = re.sub(r"^```(?:json)?\s*", "", text.strip())
+    text = re.sub(r"\s*```$", "", text.strip())
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        print(f"[WARN] Rescore JSON parse error: {e}")
+        return {}
+
+
+def run_rescore_batch(limit: int = None) -> dict:
+    """
+    Điểm vào (entry point) để chạy rescore hàng loạt cho MỌI video còn thiếu
+    điểm chất lượng hình ảnh. Gọi hàm này từ 1 endpoint riêng trong app.py
+    (ví dụ /rescore), TÁCH BIỆT với endpoint /process hiện có.
+
+    Lưu ý: nên dừng Schedule Trigger của WF2 trong lúc chạy hàm này, vì Render
+    chỉ có 1 worker — chạy đồng thời cả 2 sẽ tranh chấp tài nguyên.
+    """
+    drive_service = get_drive_service()
+    conn = get_db()
+    results = {"done": 0, "error": 0, "skipped": 0, "total_cost_usd": 0.0}
+
+    try:
+        videos = get_videos_needing_rescore(conn, limit=limit)
+        print(f"[RESCORE-BATCH] Tìm thấy {len(videos)} video cần chấm điểm")
+
+        for v in videos:
+            r = rescore_video(
+                drive_service, conn,
+                drive_file_id=v["drive_file_id"],
+                file_name=v["file_name"],
+                folder_name=v.get("folder", ""),
+                file_path=v.get("file_path", ""),
+            )
+            if r["status"] == "done":
+                results["done"] += 1
+                results["total_cost_usd"] += r.get("cost_usd", 0)
+            elif r["status"] == "skipped":
+                results["skipped"] += 1
+            else:
+                results["error"] += 1
+
+        return results
+    finally:
+        conn.close()
