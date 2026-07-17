@@ -37,7 +37,10 @@ SECONDS_PER_FRAME = 12  # cứ ~12 giây video thì lấy thêm 1 frame
 # thành 'error' trong processing_log thay vì chiếm giữ worker mãi mãi.
 FFPROBE_TIMEOUT_SEC   = 60
 FFMPEG_AUDIO_TIMEOUT  = 180
-FFMPEG_FRAMES_TIMEOUT = 600  # 10 phút
+FFMPEG_FRAMES_TIMEOUT = 900  # 15 phút — tăng từ 600s vì giờ chạy tuần tự (workers=1),
+                              # 1 job chạy lâu không còn ảnh hưởng job khác, nên có thể
+                              # cho các video bitrate rất cao (4K/HEVC) thêm thời gian
+                              # thay vì bỏ cuộc sớm và rơi vào needs_review.
 DOWNLOAD_TIMEOUT_SEC  = 600  # tối đa 10 phút để tải xong 1 video
 # ─────────────────────────────────────────────
 # NÉN VIDEO TRƯỚC KHI XỬ LÝ (nếu bitrate quá cao)
@@ -47,7 +50,9 @@ DOWNLOAD_TIMEOUT_SEC  = 600  # tối đa 10 phút để tải xong 1 video
 # FFMPEG_FRAMES_TIMEOUT dù video không hề hỏng. Bước nén này downscale +
 # chuyển sang H.264 (giải mã nhẹ hơn HEVC nhiều) để các bước sau nhanh hơn.
 # ─────────────────────────────────────────────
-FFMPEG_COMPRESS_TIMEOUT      = 500   # tối đa ~8.3 phút cho riêng bước nén (đủ cho file rất nặng)
+FFMPEG_COMPRESS_TIMEOUT      = 900   # tăng từ 500s lên 900s (15 phút) — cùng lý do với
+                                      # FFMPEG_FRAMES_TIMEOUT ở trên: chạy tuần tự nên có
+                                      # thể chờ lâu hơn cho các video bitrate cực cao
 COMPRESS_BITRATE_THRESHOLD_MBPS = 8  # nếu bitrate gốc > ngưỡng này thì mới nén
 COMPRESS_MAX_HEIGHT          = 720   # nén xuống tối đa cao 720px
 COMPRESS_CRF                 = 23    # chất lượng: 18=rất cao, 23=tốt/cân bằng, 28=thấp hơn nhưng nhẹ hơn
@@ -778,3 +783,5 @@ def process_video(drive_service, conn, video_info: dict) -> dict:
             print(traceback.format_exc())
             mark_error(conn, file_id, error_msg)
             return {"status": "error", "error": error_msg}
+
+
