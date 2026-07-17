@@ -156,6 +156,23 @@ def extract_frames(video_path: str, output_dir: str, fps: float = 1.0) -> list:
     ], check=True, timeout=FFMPEG_FRAMES_TIMEOUT)
     frames = sorted(Path(output_dir).glob("frame_*.jpg"))
     return [str(f) for f in frames]
+def _safe_remove(path: Optional[str]):
+    """
+    Xóa 1 file tạm ngay khi không còn cần dùng nữa, thay vì đợi đến khi cả
+    TemporaryDirectory được dọn ở cuối process_video(). Mục đích: giảm mức đỉnh
+    (peak) dung lượng /tmp tại một thời điểm, để giảm khả năng chạm giới hạn 2GB
+    /tmp khi xử lý các video nặng hoặc khi có nhiều bước chạy nối tiếp nhau.
+    An toàn: không raise nếu file không tồn tại hoặc đã bị xóa trước đó.
+    """
+    if not path:
+        return
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except Exception as e:
+        print(f"        [WARN] Không xóa được file tạm {path}: {e}")
+
+
 def compress_video_if_needed(video_path: str, output_path: str, duration_sec: float) -> str:
     """
     Kiểm tra bitrate thực tế của video (size_bytes / duration). Nếu bitrate
@@ -662,7 +679,13 @@ def process_video(drive_service, conn, video_info: dict) -> dict:
             # Bước 2.5: Nén video nếu bitrate quá cao (giúp các bước sau nhanh hơn nhiều)
             update_step(conn, file_id, "compressing")
             compressed_path = os.path.join(tmp_dir, "video_compressed.mp4")
+            original_video_path = video_path
             video_path = compress_video_if_needed(video_path, compressed_path, tech["duration_sec"])
+            if video_path != original_video_path:
+                # Đã nén thành công -> bản gốc (thường rất nặng, vd 500MB-1.3GB) không
+                # còn cần dùng nữa. Xóa ngay để giải phóng /tmp trước khi sang bước sau,
+                # thay vì để nó nằm chờ tới khi cả TemporaryDirectory được dọn ở cuối hàm.
+                _safe_remove(original_video_path)
             # Bước 3: Whisper
             print(f"  [3/5] Transcribing...")
             update_step(conn, file_id, "extracting_audio")
@@ -670,6 +693,8 @@ def process_video(drive_service, conn, video_info: dict) -> dict:
             extract_audio(video_path, audio_path)
             update_step(conn, file_id, "transcribing")
             transcript = transcribe_audio(audio_path)
+            # Audio đã được transcribe xong, không cần file mp3 nữa -> xóa ngay
+            _safe_remove(audio_path)
             # Bước 4: Frames
             print(f"  [4/5] Extracting frames...")
             update_step(conn, file_id, "extracting_frames")
@@ -677,6 +702,10 @@ def process_video(drive_service, conn, video_info: dict) -> dict:
             os.makedirs(frames_dir)
             frames = extract_frames(video_path, frames_dir, fps=FRAMES_PER_SEC)
             print(f"        {len(frames)} frames")
+            # Video (gốc hoặc đã nén) không còn cần dùng sau khi đã trích xong frame
+            # -> xóa ngay, tránh nó "nằm" trong /tmp suốt thời gian gọi Vision API
+            # (có thể mất tới hơn 1 phút nếu bị OpenAI rate-limit và phải retry).
+            _safe_remove(video_path)
             # Bước 5: GPT-4o mini Vision
             print(f"  [5/5] Calling GPT-4o mini Vision...")
             update_step(conn, file_id, "calling_vision_api")
@@ -691,6 +720,14 @@ def process_video(drive_service, conn, video_info: dict) -> dict:
                 series_list    = "\n".join(f"- {s}" for s in VALID_SERIES),
             )
             result   = call_vision_api(frames, prompt, max_frames)
+            # Đã gửi xong frame cho Vision API -> không còn cần các file ảnh này nữa,
+            # xóa ngay để giải phóng /tmp trước khi sang bước lưu DB (có thể chậm nếu
+            # phải tạo nhiều embedding cho nhiều đoạn).
+            try:
+                for f in frames:
+                    _safe_remove(f)
+            except Exception:
+                pass
             ai_data  = parse_ai_response(result["text"])
             cost_usd = result["cost_usd"]
             n_segs   = len(ai_data.get("valuable_segments", []))
