@@ -39,6 +39,17 @@ FFPROBE_TIMEOUT_SEC   = 60
 FFMPEG_AUDIO_TIMEOUT  = 180
 FFMPEG_FRAMES_TIMEOUT = 600  # 10 phút
 DOWNLOAD_TIMEOUT_SEC  = 600  # tối đa 10 phút để tải xong 1 video
+# ─────────────────────────────────────────────
+# NÉN VIDEO TRƯỚC KHI XỬ LÝ (nếu bitrate quá cao)
+# Một số video (đặc biệt quay 4K/HEVC từ iPhone) có bitrate rất cao dù thời
+# lượng ngắn (vd: 1.29GB cho video 2 phút ~ 77 Mbps). Với server chỉ 1 CPU,
+# việc giải mã trực tiếp các video này khiến ffmpeg cực chậm, dễ vượt
+# FFMPEG_FRAMES_TIMEOUT dù video không hề hỏng. Bước nén này downscale +
+# chuyển sang H.264 (giải mã nhẹ hơn HEVC nhiều) để các bước sau nhanh hơn.
+# ─────────────────────────────────────────────
+FFMPEG_COMPRESS_TIMEOUT      = 300   # tối đa 5 phút cho riêng bước nén
+COMPRESS_BITRATE_THRESHOLD_MBPS = 8  # nếu bitrate gốc > ngưỡng này thì mới nén
+COMPRESS_MAX_HEIGHT          = 720   # nén xuống tối đa cao 720px
 OPENAI_VISION_URL = "https://api.openai.com/v1/chat/completions"
 EMBEDDING_URL     = "https://api.openai.com/v1/embeddings"
 VALID_SERIES = [
@@ -144,6 +155,44 @@ def extract_frames(video_path: str, output_dir: str, fps: float = 1.0) -> list:
     ], check=True, timeout=FFMPEG_FRAMES_TIMEOUT)
     frames = sorted(Path(output_dir).glob("frame_*.jpg"))
     return [str(f) for f in frames]
+def compress_video_if_needed(video_path: str, output_path: str, duration_sec: float) -> str:
+    """
+    Kiểm tra bitrate thực tế của video (size_bytes / duration). Nếu bitrate
+    vượt ngưỡng COMPRESS_BITRATE_THRESHOLD_MBPS, nén lại xuống H.264 +
+    COMPRESS_MAX_HEIGHT trước khi dùng cho các bước sau (audio/frame
+    extraction) — giúp giảm tải CPU đáng kể cho các video nặng/HEVC/4K.
+
+    Trả về đường dẫn video nên dùng tiếp theo: bản nén nếu nén thành công,
+    hoặc bản gốc nếu video đã nhẹ sẵn, hoặc nếu bước nén thất bại/quá lâu
+    (trường hợp đó các bước sau sẽ tự xử lý bản gốc như trước đây, có thể
+    vẫn timeout nhưng không làm mất dữ liệu hay crash worker).
+    """
+    try:
+        size_bytes = os.path.getsize(video_path)
+        if duration_sec <= 0:
+            return video_path
+        bitrate_mbps = (size_bytes * 8) / duration_sec / 1_000_000
+        if bitrate_mbps <= COMPRESS_BITRATE_THRESHOLD_MBPS:
+            return video_path  # video đã nhẹ, không cần nén thêm
+        print(f"        Bitrate cao ({bitrate_mbps:.1f} Mbps, {size_bytes/1e6:.0f}MB) -> đang nén lại...")
+        subprocess.run([
+            "ffmpeg", "-i", video_path,
+            "-vf", f"scale=-2:{COMPRESS_MAX_HEIGHT}",
+            "-c:v", "libx264", "-crf", "28", "-preset", "veryfast",
+            "-c:a", "aac", "-b:a", "128k",
+            "-threads", "1",
+            output_path,
+            "-y", "-loglevel", "error"
+        ], check=True, timeout=FFMPEG_COMPRESS_TIMEOUT)
+        new_size = os.path.getsize(output_path)
+        print(f"        Nén xong: {size_bytes/1e6:.0f}MB -> {new_size/1e6:.0f}MB")
+        return output_path
+    except subprocess.TimeoutExpired:
+        print(f"        [WARN] Nén video timeout sau {FFMPEG_COMPRESS_TIMEOUT}s, dùng video gốc")
+        return video_path
+    except Exception as e:
+        print(f"        [WARN] Nén video lỗi ({e}), dùng video gốc")
+        return video_path
 def extract_audio(video_path: str, output_path: str):
     subprocess.run([
         "ffmpeg", "-i", video_path,
@@ -609,6 +658,10 @@ def process_video(drive_service, conn, video_info: dict) -> dict:
             # Số frame tối đa sẽ gửi cho Vision API, co giãn theo thời lượng video
             max_frames = compute_max_frames(tech["duration_sec"])
             print(f"        duration={tech['duration_sec']:.0f}s -> max_frames={max_frames}")
+            # Bước 2.5: Nén video nếu bitrate quá cao (giúp các bước sau nhanh hơn nhiều)
+            update_step(conn, file_id, "compressing")
+            compressed_path = os.path.join(tmp_dir, "video_compressed.mp4")
+            video_path = compress_video_if_needed(video_path, compressed_path, tech["duration_sec"])
             # Bước 3: Whisper
             print(f"  [3/5] Transcribing...")
             update_step(conn, file_id, "extracting_audio")
