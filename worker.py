@@ -47,9 +47,10 @@ DOWNLOAD_TIMEOUT_SEC  = 600  # tối đa 10 phút để tải xong 1 video
 # FFMPEG_FRAMES_TIMEOUT dù video không hề hỏng. Bước nén này downscale +
 # chuyển sang H.264 (giải mã nhẹ hơn HEVC nhiều) để các bước sau nhanh hơn.
 # ─────────────────────────────────────────────
-FFMPEG_COMPRESS_TIMEOUT      = 300   # tối đa 5 phút cho riêng bước nén
+FFMPEG_COMPRESS_TIMEOUT      = 500   # tối đa ~8.3 phút cho riêng bước nén (đủ cho file rất nặng)
 COMPRESS_BITRATE_THRESHOLD_MBPS = 8  # nếu bitrate gốc > ngưỡng này thì mới nén
 COMPRESS_MAX_HEIGHT          = 720   # nén xuống tối đa cao 720px
+COMPRESS_CRF                 = 23    # chất lượng: 18=rất cao, 23=tốt/cân bằng, 28=thấp hơn nhưng nhẹ hơn
 OPENAI_VISION_URL = "https://api.openai.com/v1/chat/completions"
 EMBEDDING_URL     = "https://api.openai.com/v1/embeddings"
 VALID_SERIES = [
@@ -178,8 +179,8 @@ def compress_video_if_needed(video_path: str, output_path: str, duration_sec: fl
         subprocess.run([
             "ffmpeg", "-i", video_path,
             "-vf", f"scale=-2:{COMPRESS_MAX_HEIGHT}",
-            "-c:v", "libx264", "-crf", "28", "-preset", "veryfast",
-            "-c:a", "aac", "-b:a", "128k",
+            "-c:v", "libx264", "-crf", str(COMPRESS_CRF), "-preset", "ultrafast",
+            "-c:a", "copy",  # không re-encode audio — bước transcribe tự tách audio riêng sau này
             "-threads", "1",
             output_path,
             "-y", "-loglevel", "error"
