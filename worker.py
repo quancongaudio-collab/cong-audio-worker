@@ -180,7 +180,7 @@ def compress_video_if_needed(video_path: str, output_path: str, duration_sec: fl
             "ffmpeg", "-i", video_path,
             "-vf", f"scale=-2:{COMPRESS_MAX_HEIGHT}",
             "-c:v", "libx264", "-crf", str(COMPRESS_CRF), "-preset", "ultrafast",
-            "-c:a", "copy",  # không re-encode audio — bước transcribe tự tách audio riêng sau này
+            "-c:a", "aac", "-b:a", "128k",  # re-encode audio (một số video gốc dùng PCM/codec không tương thích khi "copy" vào MP4)
             "-threads", "1",
             output_path,
             "-y", "-loglevel", "error"
