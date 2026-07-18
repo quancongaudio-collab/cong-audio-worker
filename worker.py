@@ -7,6 +7,7 @@ import json
 import uuid
 import subprocess
 import tempfile
+import shutil
 import base64
 import re
 import time
@@ -168,6 +169,40 @@ def extract_frames(video_path: str, output_dir: str, fps: float = 1.0) -> list:
     ], check=True, timeout=FFMPEG_FRAMES_TIMEOUT)
     frames = sorted(Path(output_dir).glob("frame_*.jpg"))
     return [str(f) for f in frames]
+def cleanup_stale_tmp_files():
+    """
+    Chủ động dọn sạch mọi thứ còn sót lại trong thư mục tạm hệ thống (thường
+    /tmp) TRƯỚC KHI bắt đầu xử lý 1 video mới — không chỉ dọn sau khi xong.
+    Lý do: nếu tiến trình từng bị hệ điều hành giết đột ngột (SIGKILL, OOM-kill)
+    giữa chừng, TemporaryDirectory() không kịp tự dọn, để lại rác. Vì
+    --max-requests chỉ khởi động lại worker process (không phải cả instance),
+    đĩa /tmp KHÔNG được làm sạch giữa các lần đó -> rác cộng dồn dần qua nhiều
+    lần crash cho tới khi chạm giới hạn 2GB, khiến Render phải khởi động lại
+    toàn bộ instance. Vì hiện chỉ chạy đúng 1 worker/1 thread (không xử lý
+    song song), việc dọn sạch trước mỗi job là an toàn tuyệt đối.
+    """
+    tmp_root = tempfile.gettempdir()
+    try:
+        entries = os.listdir(tmp_root)
+    except Exception as e:
+        print(f"        [WARN] Không đọc được {tmp_root}: {e}")
+        return
+    cleaned = 0
+    for name in entries:
+        full_path = os.path.join(tmp_root, name)
+        try:
+            if os.path.isdir(full_path) and not os.path.islink(full_path):
+                shutil.rmtree(full_path, ignore_errors=True)
+                cleaned += 1
+            elif os.path.isfile(full_path) or os.path.islink(full_path):
+                os.remove(full_path)
+                cleaned += 1
+        except Exception as e:
+            print(f"        [WARN] Không xóa được {full_path}: {e}")
+    if cleaned:
+        print(f"        [CLEANUP] Đã dọn {cleaned} mục rác còn sót trong {tmp_root}")
+
+
 def _safe_remove(path: Optional[str]):
     """
     Xóa 1 file tạm ngay khi không còn cần dùng nữa, thay vì đợi đến khi cả
@@ -670,6 +705,9 @@ def process_video(drive_service, conn, video_info: dict) -> dict:
     file_id   = video_info["file_id"]
     file_name = video_info["file_name"]
     print(f"\n[START] {file_name}")
+    # Dọn sạch rác còn sót từ lần crash trước (nếu có) TRƯỚC khi làm gì khác.
+    # Xem giải thích chi tiết trong docstring của cleanup_stale_tmp_files().
+    cleanup_stale_tmp_files()
     if is_already_processed(conn, file_id):
         print(f"[SKIP] Đã xử lý: {file_name}")
         return {"status": "skipped"}
