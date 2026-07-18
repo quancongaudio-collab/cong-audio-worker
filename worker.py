@@ -676,7 +676,13 @@ def process_video(drive_service, conn, video_info: dict) -> dict:
     # Kiểm tra kích thước NGAY từ metadata Drive, trước khi tải file về.
     # Nếu quá lớn -> bỏ qua sớm, tránh rủi ro tràn /tmp khi vừa giữ file gốc
     # vừa ghi file nén dở cùng lúc (xem giải thích ở MAX_VIDEO_SIZE_BYTES).
-    size_bytes = video_info.get("size_bytes")
+    # size_bytes có thể tới dưới dạng chuỗi (n8n gửi qua JSON) -> ép kiểu về int
+    # trước khi so sánh, để tránh lỗi TypeError giữa str và int.
+    size_bytes_raw = video_info.get("size_bytes")
+    try:
+        size_bytes = int(size_bytes_raw) if size_bytes_raw not in (None, "") else None
+    except (TypeError, ValueError):
+        size_bytes = None
     if size_bytes and size_bytes > MAX_VIDEO_SIZE_BYTES:
         msg = (f"Video quá lớn ({size_bytes/1e9:.2f} GB > "
                f"{MAX_VIDEO_SIZE_BYTES/1e9:.1f} GB) - bỏ qua để tránh tràn /tmp, "
@@ -801,3 +807,5 @@ def process_video(drive_service, conn, video_info: dict) -> dict:
             print(traceback.format_exc())
             mark_error(conn, file_id, error_msg)
             return {"status": "error", "error": error_msg}
+
+
