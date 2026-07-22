@@ -6,6 +6,7 @@ Chỉ import và dùng trong route mới /render-story ở app.py.
 """
 
 import os
+import re
 import time
 import random
 import shutil
@@ -31,6 +32,23 @@ def pick_music_file(mood):
     if not files:
         return None
     return os.path.join(folder, random.choice(files))
+
+
+def slugify_for_filename(text, max_len=60):
+    """
+    Chuyển overlay_text thành đoạn an toàn để chèn vào tên file trên Drive.
+    Giữ nguyên tiếng Việt có dấu (Drive/Windows/macOS đều hỗ trợ Unicode trong tên file),
+    chỉ loại bỏ các ký tự không hợp lệ trong tên file và đổi khoảng trắng thành dấu gạch ngang.
+    """
+    if not text:
+        return ""
+    # Bỏ ký tự không hợp lệ trong tên file: \ / : * ? " < > | và xuống dòng
+    cleaned = re.sub(r'[\\/:*?"<>|\n\r]', '', text)
+    # Gộp khoảng trắng thừa, đổi thành dấu gạch ngang
+    cleaned = re.sub(r'\s+', '-', cleaned.strip())
+    # Bỏ dấu gạch ngang/chấm thừa ở đầu/cuối
+    cleaned = cleaned.strip('-.')
+    return cleaned[:max_len]
 
 
 def download_drive_file(drive_service, file_id, dest_path):
@@ -76,13 +94,13 @@ def get_user_drive_service():
 
 def render_story_video(drive_service, data):
     """
-    Hàm chính: tải video gốc -> FFmpeg cắt/ghép chữ/nhạc -> upload kết quả -> dọn dẹp.
+    Hàm chính: tải video gốc -> FFmpeg cắt/ghép nhạc -> upload kết quả -> dọn dẹp.
 
     data (dict) cần có các khoá:
       story_id (str)               - mã Story, dùng đặt tên file
       drive_file_id (str)          - id video gốc trên Drive
-      overlay_text (str)           - câu chữ overlay (đã kiểm tra độ dài ở n8n)
-      overlay_time_sec (float)     - giây xuất hiện chữ, tính từ đầu đoạn cắt
+      overlay_text (str)           - câu mô tả (KHÔNG còn burn vào video — chỉ dùng để đặt tên file Drive)
+      overlay_time_sec (float)     - không còn dùng để vẽ chữ, giữ lại tham số cho tương thích ngược
       duration (float)             - thời lượng đoạn cắt (giây), sẽ tự giới hạn 20-40s
       highlight_start_sec (float)  - giây bắt đầu cắt trong video gốc
       keep_original_audio (bool)   - True: giữ tiếng gốc, False: ghép nhạc nền
@@ -92,7 +110,6 @@ def render_story_video(drive_service, data):
     story_id = str(data.get("story_id", f"tmp{int(time.time())}"))
     drive_file_id = data["drive_file_id"]
     overlay_text = (data.get("overlay_text") or "").replace("\n", " ").strip()
-    overlay_time_sec = float(data.get("overlay_time_sec") or 2)
     duration = min(max(float(data.get("duration") or 30), 20), 40)
     start = float(data.get("highlight_start_sec") or 0)
     keep_original_audio = bool(data.get("keep_original_audio") or False)
@@ -108,15 +125,10 @@ def render_story_video(drive_service, data):
         # 1. Tải video gốc về
         download_drive_file(drive_service, drive_file_id, input_path)
 
-        # 2. Chuẩn bị filter chữ overlay (dùng fontconfig có sẵn trong FFmpeg, không cần file font riêng)
-        escaped_text = overlay_text.replace(":", "\\:").replace("'", "\\'")
-        text_start = start + overlay_time_sec
-
+        # 2. Filter video: crop dọc + fade — KHÔNG còn drawtext, video xuất ra sạch không chữ
         vf = (
             f"crop=ih*9/16:ih,scale=1080:1920,"
-            f"fade=t=in:st=0:d=0.6,fade=t=out:st={duration - 0.6}:d=0.6,"
-            f"drawtext=font='DejaVu Sans\\:style=Bold':text='{escaped_text}':"
-            f"fontcolor=white:fontsize=54:x=(w-text_w)/2:y=h-260:enable='gte(t,{text_start})'"
+            f"fade=t=in:st=0:d=0.6,fade=t=out:st={duration - 0.6}:d=0.6"
         )
 
         # 3. Ghép lệnh FFmpeg tuỳ theo có giữ âm thanh gốc hay không
@@ -149,10 +161,19 @@ def render_story_video(drive_service, data):
         if not os.path.exists(output_path):
             raise RuntimeError("FFmpeg chạy xong nhưng không tạo được file output.")
 
-        # 5. Upload kết quả lên Drive (dùng tài khoản Gmail thật qua OAuth, không dùng Service Account)
+        # 5. Đặt tên file Drive kèm câu mô tả (overlay_text) để người đăng thấy ngay trên Drive,
+        #    thay vì burn chữ vào video. Ví dụ: qca_story_1_Am-thanh-xua-tan-moi-uu-phien.mp4
+        filename_slug = slugify_for_filename(overlay_text)
+        drive_file_name = (
+            f"qca_story_{story_id}.mp4"
+            if not filename_slug
+            else f"qca_story_{story_id}_{filename_slug}.mp4"
+        )
+
+        # 6. Upload kết quả lên Drive (dùng tài khoản Gmail thật qua OAuth, không dùng Service Account)
         user_drive_service = get_user_drive_service()
         uploaded = upload_drive_file(
-            user_drive_service, output_path, f"qca_story_{story_id}.mp4", output_folder_id
+            user_drive_service, output_path, drive_file_name, output_folder_id
         )
 
         return {
@@ -164,5 +185,5 @@ def render_story_video(drive_service, data):
         }
 
     finally:
-        # 6. Dọn dẹp file tạm — LUÔN chạy dù thành công hay lỗi
+        # 7. Dọn dẹp file tạm — LUÔN chạy dù thành công hay lỗi
         shutil.rmtree(tmp_dir, ignore_errors=True)
