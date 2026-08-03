@@ -63,11 +63,22 @@ def _find_start_index(segments, requested_start_sec):
     return None
 
 
+def _ends_with_question(text: str) -> bool:
+    """Kiểm tra thô: câu này có phải câu hỏi không (kết thúc bằng dấu '?').
+    Dùng làm lớp phòng vệ thêm — ưu tiên không dừng ngay sau câu hỏi nếu còn
+    lựa chọn khác, vì hỏi xong mà không có câu trả lời là cụt ý, dù câu đó
+    ngữ pháp vẫn trọn vẹn. Đây chỉ là tín hiệu cơ học (dấu câu), không hiểu
+    được ngữ nghĩa thật — lớp chính vẫn là hướng dẫn cho AI ở worker.py."""
+    return text.strip().endswith("?")
+
+
 def _try_window(segments, start_idx):
     """
     Từ segment start_idx (dùng làm điểm bắt đầu thật), dò tới các segment sau để
     tìm điểm kết thúc hợp lệ tốt nhất: nằm trong [ABS_MIN, ABS_MAX], ưu tiên có
-    khoảng lặng tự nhiên trước câu kế tiếp, và ưu tiên gần dải mục tiêu 20-40s.
+    khoảng lặng tự nhiên trước câu kế tiếp, ưu tiên gần dải mục tiêu 20-40s, và
+    ưu tiên KHÔNG dừng ngay sau 1 câu hỏi (tránh cụt ý kiểu hỏi xong không có
+    trả lời).
     Trả về (start_sec, end_sec) hoặc None nếu không có ứng viên hợp lệ.
     """
     actual_start = segments[start_idx]["start"]
@@ -88,7 +99,8 @@ def _try_window(segments, start_idx):
             if j + 1 < len(segments) else 999.0
         )
         has_natural_pause = gap_to_next >= NATURAL_PAUSE_MIN_SEC
-        score = (0 if has_natural_pause else 1, dist_to_target)
+        is_question_end = _ends_with_question(segments[j]["text"])
+        score = (1 if is_question_end else 0, 0 if has_natural_pause else 1, dist_to_target)
         if best_score is None or score < best_score:
             best_score = score
             best_window = (actual_start, end_candidate)

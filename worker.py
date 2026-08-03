@@ -350,6 +350,15 @@ Số lượng đoạn: KHÔNG giới hạn, do BẠN tự quyết định dựa 
 Một video 15 phút có thể cho ra 5, 8, hay 12 đoạn — tuỳ nội dung, không tuỳ công thức.
 Nếu video ({duration_sec:.0f} giây) THỰC SỰ không có đoạn nào đáng tái sử dụng, trả về mảng rỗng []
 — điều này hoàn toàn chấp nhận được, không cố gò ép tạo ra đoạn giá trị thấp.
+=== ĐOẠN PHẢI LÀ 1 Ý TRỌN VẸN — RẤT QUAN TRỌNG ===
+"Trọn câu" chưa chắc đã "trọn ý". Trước khi chốt end_time của một đoạn, đọc lại transcript ngay
+sau điểm đó: nếu câu cuối cùng trong đoạn là một CÂU HỎI (của người nói hoặc người được phỏng vấn)
+và câu/đoạn trả lời cho câu hỏi đó xuất hiện ngay sau trong transcript, BẮT BUỘC phải kéo dài
+end_time để bao gồm luôn câu trả lời đó — không được dừng ngay sau câu hỏi khi còn câu trả lời
+ở ngay sau. Nếu không có câu trả lời nào trong video (người nói tự hỏi rồi chuyển ý khác, hoặc
+video kết thúc luôn sau câu hỏi), khi đó dừng sau câu hỏi mới chấp nhận được. Áp dụng tương tự cho
+mọi kiểu "ý dở dang" khác — ví dụ người nói liệt kê "thứ nhất..., thứ hai..." mà đoạn chỉ lấy được
+"thứ nhất" thì phải bao gồm luôn "thứ hai", hoặc chọn điểm dừng trước khi bắt đầu liệt kê.
 === AUDIO METADATA — BẮT BUỘC, PHỤC VỤ "ANALYZE ONCE – REUSE EVERYWHERE" ===
 Các workflow sản xuất nội dung sau này (Facebook Story, Facebook Reel, TikTok, YouTube Shorts,
 Website) sẽ CHỈ ĐỌC các trường audio dưới đây để quyết định giữ âm thanh gốc hay ghép nhạc nền —
